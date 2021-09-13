@@ -3,4 +3,4 @@
 
 Repositório do grupo 1 da matéria de Projeto de Sistemas Embutidos 2021/1 da UFMG
 
-Link para o vídeo: https://drive.google.com/file/d/1SrI255mzp2xKEfJ4K7XTd-9Tk77jbDe3/view?usp=sharing
+Link para o vídeo: https://drive.google.com/file/d/1cDzaSRnL-ZNM2ZCqEjoC__WAHk8bXf6L/view?usp=sharing

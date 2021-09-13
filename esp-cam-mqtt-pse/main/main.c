@@ -1,11 +1,3 @@
-/* 
-   This code is in the Public Domain (or CC0 licensed, at your option.)
-
-   Unless required by applicable law or agreed to in writing, this
-   software is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
-   CONDITIONS OF ANY KIND, either express or implied.
-*/
-
 #include <stdio.h>
 #include <stdint.h>
 #include <stddef.h>
@@ -22,6 +14,9 @@
 #include "esp_spiffs.h" 
 #include "esp_sntp.h"
 #include "mqtt_client.h"
+#include <mbedtls/base64.h>
+#include "cJSON.h"
+#include "cJSON_Utils.h"
 
 #include "esp_camera.h"
 
@@ -334,6 +329,91 @@ void mqtt_sub(void *pvParameters);
 
 void http_task(void *pvParameters);
 
+int32_t _calcBase64EncodedSize(int origDataSize)
+{
+	int32_t numBlocks6 = ((origDataSize * 8) + 5) / 6;
+	int32_t numBlocks4 = (numBlocks6 + 3) / 4;
+	int32_t numNetChars = numBlocks4 * 4;
+	//return numNetChars + ((numNetChars / 76) * 2);
+	return numNetChars;
+}
+
+esp_err_t _Image2Base64(char * filename, size_t fsize, unsigned char * base64_buffer, size_t base64_buffer_len)
+{
+	unsigned char* image_buffer = NULL;
+	//image_buffer = malloc(fsize + 1);
+	image_buffer = malloc(fsize);
+	if (image_buffer == NULL) {
+		ESP_LOGE(TAG, "malloc fail. image_buffer %d", fsize);
+		return ESP_FAIL;
+	}
+
+	FILE * fp;
+	if((fp=fopen(filename,"rb"))==NULL){
+		ESP_LOGE(TAG, "fopen fail. [%s]", filename);
+		return ESP_FAIL;
+	}else{
+		for (int i=0;i<fsize;i++) {
+			fread(&image_buffer[i],sizeof(char),1,fp);
+		}
+		fclose(fp);
+	}
+
+	size_t encord_len;
+	esp_err_t ret = mbedtls_base64_encode(base64_buffer, base64_buffer_len, &encord_len, image_buffer, fsize);
+	ESP_LOGI(TAG, "mbedtls_base64_encode=%d encord_len=%d", ret, encord_len);
+	free(image_buffer);
+	return ret;
+}
+
+/*
+char *create_message(char * frame_b64, char * RTC_received, char * animal_ID)
+{
+    char *string = NULL;
+    cJSON *picture = NULL;
+    cJSON *date = NULL;
+    cJSON *animal_id = NULL;
+	cJSON *Movement = NULL;
+
+    cJSON *monitor = cJSON_CreateObject();
+    if (monitor == NULL)
+    {
+        goto end;
+    }
+
+    picture = cJSON_CreateString(frame_b64);
+    if (picture == NULL)
+    {
+        goto end;
+    }
+    cJSON_AddItemToObject(monitor, "picture", picture);
+
+	date = cJSON_CreateString(RTC_received);
+    if (date == NULL)
+    {
+        goto end;
+    }
+    cJSON_AddItemToObject(monitor, "date", date);
+
+	animal_id = cJSON_CreateString(animal_ID);
+    if (animal_id == NULL)
+    {
+        goto end;
+    }
+    cJSON_AddItemToObject(monitor, "animal_id", animal_id);
+
+    string = cJSON_Print(monitor);
+    if (string == NULL)
+    {
+        fprintf(stderr, "Failed to print monitor.\n");
+    }
+
+end:
+    cJSON_Delete(monitor);
+    return string;
+}
+*/
+
 void app_main(void)
 {
 	//Initialize NVS
@@ -485,6 +565,56 @@ void app_main(void)
 
 				ESP_LOGI(TAG, "Captured with %s", FRAMESIZE_STRING);
 				//int msg_id = esp_mqtt_client_publish(mqtt_client, CONFIG_PUB_TOPIC, "test", 0, 1, 0);
+				char * localFileName = httpBuf.localFileName;
+				struct stat st;
+				if (stat(localFileName, &st) != 0) {
+					ESP_LOGE(TAG, "[%s] not found", localFileName);
+					//httpd_resp_sendstr_chunk(req, NULL);
+				}
+
+				ESP_LOGI(TAG, "%s exist st.st_size=%ld", localFileName, st.st_size);
+				int32_t base64Size = _calcBase64EncodedSize(st.st_size);
+				ESP_LOGI(TAG, "base64Size=%d", base64Size);
+
+				// Convert from JPEG to BASE64
+				unsigned char* img_src_buffer = NULL;
+				size_t img_src_buffer_len = base64Size + 1;
+				img_src_buffer = malloc(img_src_buffer_len);
+				if (img_src_buffer == NULL) {
+					ESP_LOGE(TAG, "malloc fail. img_src_buffer_len %d", img_src_buffer_len);
+				} else {
+					esp_err_t ret = _Image2Base64(localFileName, st.st_size, img_src_buffer, img_src_buffer_len);
+					ESP_LOGI(TAG, "Image2Base64=%d", ret);
+					if (ret != 0) {
+						ESP_LOGE(TAG, "Error in mbedtls encode! ret = -0x%x", -ret);
+					} else {
+
+					/*	char * message_json = NULL;
+						cJSON *object_msg = cJSON_CreateObject();
+						cJSON_AddStringToObject(object_msg, "picture", (char *)img_src_buffer);
+						// message_json = create_message((char *)img_src_buffer, "2021/12/08 06:15:22", "1234-5678");
+						int message_len;
+						message_len = cJSON_GetArraySize(object_msg);
+						message_json = cJSON_Print(object_msg);
+						cJSON_Delete(object_msg);
+						int msg_id = esp_mqtt_client_publish(mqtt_client, CONFIG_PUB_TOPIC, (char *)message_json, message_len, 1, 0); 
+						cJSON_free(message_json);
+						*/
+
+						int msg_id = esp_mqtt_client_publish(mqtt_client, CONFIG_PUB_TOPIC, (char *)img_src_buffer, img_src_buffer_len, 1, 0);
+						if (msg_id < 0) {
+							ESP_LOGE(TAG, "esp_mqtt_client_publish fail");
+						} else {
+							ESP_LOGI(TAG, "sent publish successful, msg_id=%d fb->len=%d", msg_id, fb->len);
+							if (xQueueSend(xQueueHttp, &httpBuf, 10) != pdPASS) {
+								ESP_LOGE(TAG, "xQueueSend xQueueHttp fail");
+							}
+						}
+					}
+				}
+				
+				// Send raw pixel data
+				/*
 				int msg_id = esp_mqtt_client_publish(mqtt_client, CONFIG_PUB_TOPIC, (char *)fb->buf, fb->len, 1, 0);
 				if (msg_id < 0) {
 					ESP_LOGE(TAG, "esp_mqtt_client_publish fail");
@@ -494,7 +624,7 @@ void app_main(void)
 						ESP_LOGE(TAG, "xQueueSend xQueueHttp fail");
 					}
 				}
-
+				*/
 				//return the frame buffer back to the driver for reuse
 				esp_camera_fb_return(fb);
 			} else {

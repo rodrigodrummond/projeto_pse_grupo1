@@ -6,5 +6,10 @@
     "idf.espIdfPathWin": "C:\\esp\\esp-idf",
     "idf.portWin": "COM6",
     "idf.pythonBinPathWin": "C:\\esp\\tools\\.espressif\\python_env\\idf4.3_py3.8_env\\Scripts\\python.exe",
-    "idf.toolsPathWin": "C:\\esp\\tools\\.espressif"
+    "idf.toolsPathWin": "C:\\esp\\tools\\.espressif",
+    "files.associations": {
+        "cjson_utils.h": "c",
+        "cjson.h": "c",
+        "string": "c"
+    }
 }
